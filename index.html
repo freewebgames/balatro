@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<title>Love.js Single File Build</title>
+
+<style>
+html, body {
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    overflow: hidden;
+    background: #000;
+}
+
+#canvas {
+    position: absolute;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: block;
+}
+</style>
+
+<script>
+/* =========================================================
+   BLOCK BROWSER DIALOGS / POPUPS
+   ========================================================= */
+
+(() => {
+    window.alert = () => {};
+    window.prompt = () => null;
+    window.confirm = () => false;
+
+    window.open = () => {
+        console.warn("Blocked window.open");
+        return null;
+    };
+
+    if (window.HTMLDialogElement) {
+        const blocked = function () {};
+        HTMLDialogElement.prototype.show = blocked;
+        HTMLDialogElement.prototype.showModal = blocked;
+        HTMLDialogElement.prototype.close = blocked;
+    }
+})();
+</script>
+
+<script>
+/* =========================================================
+   INDEXEDDB NAMESPACE PATCH
+   ========================================================= */
+
+(() => {
+    if (!window.indexedDB) return;
+
+    const PREFIX = "Balatro_vanilla_";
+    const originalOpen = indexedDB.open.bind(indexedDB);
+    const originalDeleteDatabase = indexedDB.deleteDatabase.bind(indexedDB);
+
+    indexedDB.open = function (name, version) {
+        const prefixedName = PREFIX + name;
+        return version !== undefined
+            ? originalOpen(prefixedName, version)
+            : originalOpen(prefixedName);
+    };
+
+    indexedDB.deleteDatabase = function (name) {
+        return originalDeleteDatabase(PREFIX + name);
+    };
+})();
+</script>
+
+<!-- =========================================================
+     EMBEDDED FILE PLACEHOLDERS
+     Paste the full contents of each file below.
+     Keep love.min.js before module.js.
+     ========================================================= -->
+
+<script>
+/* PASTE love.min.js HERE */
+</script>
+
+<script>
+/* PASTE module.js HERE */
+</script>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+<script>
+/* =========================================================
+   BOOTSTRAP
+   ========================================================= */
+
+(async () => {
+    try {
+        const canvasEl = document.getElementById("canvas");
+
+        if (typeof getSource !== "function") {
+            throw new Error("getSource() is missing.");
+        }
+
+        if (typeof Love !== "function") {
+            throw new Error("Love() is missing.");
+        }
+
+        const d = await getSource();
+
+        window.Module = {
+            INITIAL_MEMORY: 2 ** 28,
+            canvas: canvasEl,
+            printErr: console.error,
+            arguments: ["game.love"]
+        };
+
+        Module.preRun = [function () {
+            Module.addRunDependency("fp game.love");
+
+            const ptr = Module.getMemory(d.length);
+            Module["HEAPU8"].set(d, ptr);
+
+            Module.FS_createDataFile(
+                "/",
+                "game.love",
+                d,
+                true,
+                true,
+                true
+            );
+
+            Module.removeRunDependency("fp game.love");
+        }];
+
+        Love(Module);
+    } catch (err) {
+        console.error(err);
+        document.body.innerHTML = "<pre style='color:white;white-space:pre-wrap;padding:16px;margin:0'>" +
+            String(err && err.stack ? err.stack : err) +
+            "</pre>";
+    }
+})();
+</script>
+</body>
+</html>
