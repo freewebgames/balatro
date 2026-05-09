@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-<title>Love.js Single File Build</title>
+<title>Balatro CDN Chunk Loader</title>
 
 <style>
 html, body {
@@ -25,87 +25,136 @@ html, body {
 
 <script>
 /* =========================================================
-   BLOCK BROWSER DIALOGS / POPUPS
+   BLOCK POPUPS / DIALOGS
    ========================================================= */
-
 (() => {
     window.alert = () => {};
     window.prompt = () => null;
     window.confirm = () => false;
 
-    window.open = () => {
-        console.warn("Blocked window.open");
-        return null;
-    };
+    window.open = () => null;
 
     if (window.HTMLDialogElement) {
-        const blocked = function () {};
-        HTMLDialogElement.prototype.show = blocked;
-        HTMLDialogElement.prototype.showModal = blocked;
-        HTMLDialogElement.prototype.close = blocked;
+        const noop = () => {};
+        HTMLDialogElement.prototype.show = noop;
+        HTMLDialogElement.prototype.showModal = noop;
+        HTMLDialogElement.prototype.close = noop;
     }
 })();
 </script>
 
 <script>
 /* =========================================================
-   INDEXEDDB NAMESPACE PATCH
+   INDEXEDDB PREFIX PATCH
    ========================================================= */
-
 (() => {
     if (!window.indexedDB) return;
 
     const PREFIX = "Balatro_vanilla_";
-    const originalOpen = indexedDB.open.bind(indexedDB);
-    const originalDeleteDatabase = indexedDB.deleteDatabase.bind(indexedDB);
 
-    indexedDB.open = function (name, version) {
-        const prefixedName = PREFIX + name;
-        return version !== undefined
-            ? originalOpen(prefixedName, version)
-            : originalOpen(prefixedName);
-    };
+    const open = indexedDB.open.bind(indexedDB);
+    const del = indexedDB.deleteDatabase.bind(indexedDB);
 
-    indexedDB.deleteDatabase = function (name) {
-        return originalDeleteDatabase(PREFIX + name);
-    };
+    indexedDB.open = (name, version) =>
+        version !== undefined
+            ? open(PREFIX + name, version)
+            : open(PREFIX + name);
+
+    indexedDB.deleteDatabase = (name) => del(PREFIX + name);
 })();
 </script>
 
-<!-- =========================================================
-     EMBEDDED FILE PLACEHOLDERS
-     Paste the full contents of each file below.
-     Keep love.min.js before module.js.
-     ========================================================= -->
-
 <script>
-/* PASTE love.min.js HERE */
+/* =========================================================
+   CDN CONFIG
+   ========================================================= */
+
+const CDN = "https://cdn.jsdelivr.net/gh/freewebgames/balatro/";
+
+const MODULE_PARTS = [
+    "modulejs_part_aa",
+    "modulejs_part_ab",
+    "modulejs_part_ac",
+    "modulejs_part_ad",
+    "modulejs_part_ae",
+    "modulejs_part_af"
+];
+
+/* =========================================================
+   SAFE BINARY MERGER (NO STRING CORRUPTION)
+   ========================================================= */
+async function loadModuleFromChunks() {
+
+    const buffers = await Promise.all(
+        MODULE_PARTS.map(f =>
+            fetch(CDN + f).then(r => r.arrayBuffer())
+        )
+    );
+
+    const blob = new Blob(buffers, {
+        type: "application/javascript"
+    });
+
+    const url = URL.createObjectURL(blob);
+
+    return new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = url;
+        s.onload = resolve;
+        s.onerror = reject;
+        document.body.appendChild(s);
+    });
+}
+
+/* =========================================================
+   ENGINE LOADER
+   ========================================================= */
+function loadScript(url) {
+    return new Promise((resolve, reject) => {
+        const s = document.createElement("script");
+        s.src = url;
+        s.onload = resolve;
+        s.onerror = reject;
+        document.body.appendChild(s);
+    });
+}
 </script>
 
-<script>
-/* PASTE module.js HERE */
-</script>
 </head>
+
 <body>
 <canvas id="canvas"></canvas>
 
 <script>
 /* =========================================================
-   BOOTSTRAP
+   BOOT SEQUENCE
    ========================================================= */
-
 (async () => {
     try {
+
         const canvasEl = document.getElementById("canvas");
 
-        if (typeof getSource !== "function") {
-            throw new Error("getSource() is missing.");
-        }
+        /* =========================
+           STAGE 1: ENGINE
+        ========================= */
+        await loadScript(CDN + "love.min.js");
 
         if (typeof Love !== "function") {
-            throw new Error("Love() is missing.");
+            throw new Error("love.min.js failed (Love missing)");
         }
 
+        /* =========================
+           STAGE 2: MODULE (CHUNK MERGE)
+        ========================= */
+        await loadModuleFromChunks();
+
+        if (typeof getSource !== "function") {
+            throw new Error("module failed (getSource missing)");
+        }
+
+        /* =========================
+           STAGE 3: GAME DATA
+        ========================= */
         const d = await getSource();
 
         window.Module = {
@@ -119,6 +168,7 @@ html, body {
             Module.addRunDependency("fp game.love");
 
             const ptr = Module.getMemory(d.length);
+
             Module["HEAPU8"].set(d, ptr);
 
             Module.FS_createDataFile(
@@ -134,13 +184,16 @@ html, body {
         }];
 
         Love(Module);
+
     } catch (err) {
         console.error(err);
-        document.body.innerHTML = "<pre style='color:white;white-space:pre-wrap;padding:16px;margin:0'>" +
-            String(err && err.stack ? err.stack : err) +
+        document.body.innerHTML =
+            "<pre style='color:white;white-space:pre-wrap;padding:16px;margin:0'>" +
+            (err?.stack || err) +
             "</pre>";
     }
 })();
 </script>
+
 </body>
 </html>
