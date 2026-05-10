@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-<title>Balatro CDN Chunk Loader</title>
+<title>Balatro Local Chunk Loader</title>
 
 <style>
 html, body {
@@ -50,9 +50,10 @@ html, body {
 (() => {
     const noOp = () => Promise.reject("Fullscreen blocked by page policy");
 
-    // Override document and element fullscreen methods
     if (document.fullscreenEnabled !== undefined) {
-        Object.defineProperty(document, "fullscreenEnabled", { value: false });
+        Object.defineProperty(document, "fullscreenEnabled", {
+            value: false
+        });
     }
 
     document.exitFullscreen = noOp;
@@ -61,6 +62,7 @@ html, body {
     document.msExitFullscreen = noOp;
 
     const elemProto = HTMLElement.prototype;
+
     elemProto.requestFullscreen = noOp;
     elemProto.webkitRequestFullscreen = noOp;
     elemProto.mozRequestFullScreen = noOp;
@@ -91,10 +93,20 @@ html, body {
 
 <script>
 /* =========================================================
-   CDN CONFIG
+   LOCAL FILE CONFIG
    ========================================================= */
 
-const CDN = "https://cdn.jsdelivr.net/gh/freewebgames/balatro/";
+/*
+    Uses files from the SAME DIRECTORY as index.html
+
+    Example:
+    /balatro/index.html
+    /balatro/love.min.js
+    /balatro/modulejs_part_aa
+    etc.
+*/
+
+const BASE = "./";
 
 const MODULE_PARTS = [
     "modulejs_part_aa",
@@ -106,13 +118,22 @@ const MODULE_PARTS = [
 ];
 
 /* =========================================================
-   SAFE BINARY MERGER (NO STRING CORRUPTION)
+   SAFE BINARY MERGER
    ========================================================= */
 async function loadModuleFromChunks() {
 
     const buffers = await Promise.all(
         MODULE_PARTS.map(f =>
-            fetch(CDN + f).then(r => r.arrayBuffer())
+            fetch(BASE + f).then(async r => {
+
+                if (!r.ok) {
+                    throw new Error(
+                        "Failed loading chunk: " + f
+                    );
+                }
+
+                return r.arrayBuffer();
+            })
         )
     );
 
@@ -123,23 +144,36 @@ async function loadModuleFromChunks() {
     const url = URL.createObjectURL(blob);
 
     return new Promise((resolve, reject) => {
+
         const s = document.createElement("script");
+
         s.src = url;
-        s.onload = resolve;
+
+        s.onload = () => {
+            URL.revokeObjectURL(url);
+            resolve();
+        };
+
         s.onerror = reject;
+
         document.body.appendChild(s);
     });
 }
 
 /* =========================================================
-   ENGINE LOADER
+   SCRIPT LOADER
    ========================================================= */
 function loadScript(url) {
+
     return new Promise((resolve, reject) => {
+
         const s = document.createElement("script");
+
         s.src = url;
+
         s.onload = resolve;
         s.onerror = reject;
+
         document.body.appendChild(s);
     });
 }
@@ -148,6 +182,7 @@ function loadScript(url) {
 </head>
 
 <body>
+
 <canvas id="canvas"></canvas>
 
 <script>
@@ -155,26 +190,32 @@ function loadScript(url) {
    BOOT SEQUENCE
    ========================================================= */
 (async () => {
+
     try {
 
-        const canvasEl = document.getElementById("canvas");
+        const canvasEl =
+            document.getElementById("canvas");
 
         /* =========================
            STAGE 1: ENGINE
         ========================= */
-        await loadScript(CDN + "love.min.js");
+        await loadScript(BASE + "love.min.js");
 
         if (typeof Love !== "function") {
-            throw new Error("love.min.js failed (Love missing)");
+            throw new Error(
+                "love.min.js failed (Love missing)"
+            );
         }
 
         /* =========================
-           STAGE 2: MODULE (CHUNK MERGE)
+           STAGE 2: MODULE
         ========================= */
         await loadModuleFromChunks();
 
         if (typeof getSource !== "function") {
-            throw new Error("module failed (getSource missing)");
+            throw new Error(
+                "module failed (getSource missing)"
+            );
         }
 
         /* =========================
@@ -190,9 +231,13 @@ function loadScript(url) {
         };
 
         Module.preRun = [function () {
-            Module.addRunDependency("fp game.love");
 
-            const ptr = Module.getMemory(d.length);
+            Module.addRunDependency(
+                "fp game.love"
+            );
+
+            const ptr =
+                Module.getMemory(d.length);
 
             Module["HEAPU8"].set(d, ptr);
 
@@ -205,18 +250,23 @@ function loadScript(url) {
                 true
             );
 
-            Module.removeRunDependency("fp game.love");
+            Module.removeRunDependency(
+                "fp game.love"
+            );
         }];
 
         Love(Module);
 
     } catch (err) {
+
         console.error(err);
+
         document.body.innerHTML =
             "<pre style='color:white;white-space:pre-wrap;padding:16px;margin:0'>" +
             (err?.stack || err) +
             "</pre>";
     }
+
 })();
 </script>
 
