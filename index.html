@@ -2,32 +2,52 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Balatro CDN Chunk Loader</title>
 
 <style>
 html, body {
-    width: 100vw;
-    height: 100vh;
+    width: 100%;
+    height: 100%;
     margin: 0;
     overflow: hidden;
     background: #000;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
+/* =========================================
+   FIXED WINDOWED CANVAS
+========================================= */
 #canvas {
-    position: absolute;
-    inset: 0;
-    width: 100vw;
-    height: 100vh;
+    width: 1280px;
+    height: 720px;
+
+    max-width: 100vw;
+    max-height: 100vh;
+
     display: block;
+    background: #000;
+}
+
+/* stop browser fullscreen styling */
+canvas:fullscreen,
+canvas:-webkit-full-screen,
+canvas:-moz-full-screen,
+canvas:-ms-fullscreen {
+    width: 1280px !important;
+    height: 720px !important;
 }
 </style>
 
 <script>
 /* =========================================================
-   BLOCK POPUPS / DIALOGS
+   BLOCK POPUPS / DIALOGS / FULLSCREEN
    ========================================================= */
 (() => {
+
     window.alert = () => {};
     window.prompt = () => null;
     window.confirm = () => false;
@@ -40,6 +60,32 @@ html, body {
         HTMLDialogElement.prototype.showModal = noop;
         HTMLDialogElement.prototype.close = noop;
     }
+
+    /* =========================================
+       BLOCK FULLSCREEN REQUESTS
+    ========================================= */
+
+    const deny = () => Promise.reject?.("Fullscreen blocked");
+
+    const protoTargets = [
+        Element.prototype,
+        HTMLCanvasElement.prototype
+    ];
+
+    for (const proto of protoTargets) {
+
+        proto.requestFullscreen = deny;
+        proto.webkitRequestFullscreen = deny;
+        proto.webkitRequestFullScreen = deny;
+        proto.mozRequestFullScreen = deny;
+        proto.msRequestFullscreen = deny;
+    }
+
+    document.exitFullscreen = () => {};
+    document.webkitExitFullscreen = () => {};
+    document.mozCancelFullScreen = () => {};
+    document.msExitFullscreen = () => {};
+
 })();
 </script>
 
@@ -48,6 +94,7 @@ html, body {
    INDEXEDDB PREFIX PATCH
    ========================================================= */
 (() => {
+
     if (!window.indexedDB) return;
 
     const PREFIX = "Balatro_vanilla_";
@@ -61,6 +108,7 @@ html, body {
             : open(PREFIX + name);
 
     indexedDB.deleteDatabase = (name) => del(PREFIX + name);
+
 })();
 </script>
 
@@ -98,10 +146,13 @@ async function loadModuleFromChunks() {
     const url = URL.createObjectURL(blob);
 
     return new Promise((resolve, reject) => {
+
         const s = document.createElement("script");
+
         s.src = url;
         s.onload = resolve;
         s.onerror = reject;
+
         document.body.appendChild(s);
     });
 }
@@ -110,11 +161,15 @@ async function loadModuleFromChunks() {
    ENGINE LOADER
    ========================================================= */
 function loadScript(url) {
+
     return new Promise((resolve, reject) => {
+
         const s = document.createElement("script");
+
         s.src = url;
         s.onload = resolve;
         s.onerror = reject;
+
         document.body.appendChild(s);
     });
 }
@@ -123,20 +178,48 @@ function loadScript(url) {
 </head>
 
 <body>
-<canvas id="canvas"></canvas>
+
+<canvas id="canvas" width="1280" height="720"></canvas>
 
 <script>
 /* =========================================================
    BOOT SEQUENCE
    ========================================================= */
 (async () => {
+
     try {
 
         const canvasEl = document.getElementById("canvas");
 
+        /* =========================================
+           FORCE WINDOWED MODE
+        ========================================= */
+
+        Object.defineProperty(canvasEl, "style", {
+            value: canvasEl.style,
+            writable: false
+        });
+
+        const originalSetAttribute =
+            canvasEl.setAttribute.bind(canvasEl);
+
+        canvasEl.setAttribute = function(name, value) {
+
+            if (
+                name === "style" ||
+                name === "width" ||
+                name === "height"
+            ) {
+                return;
+            }
+
+            return originalSetAttribute(name, value);
+        };
+
         /* =========================
            STAGE 1: ENGINE
         ========================= */
+
         await loadScript(CDN + "love.min.js");
 
         if (typeof Love !== "function") {
@@ -144,8 +227,9 @@ function loadScript(url) {
         }
 
         /* =========================
-           STAGE 2: MODULE (CHUNK MERGE)
+           STAGE 2: MODULE
         ========================= */
+
         await loadModuleFromChunks();
 
         if (typeof getSource !== "function") {
@@ -155,6 +239,7 @@ function loadScript(url) {
         /* =========================
            STAGE 3: GAME DATA
         ========================= */
+
         const d = await getSource();
 
         window.Module = {
@@ -165,6 +250,7 @@ function loadScript(url) {
         };
 
         Module.preRun = [function () {
+
             Module.addRunDependency("fp game.love");
 
             const ptr = Module.getMemory(d.length);
@@ -185,13 +271,33 @@ function loadScript(url) {
 
         Love(Module);
 
+        /* =========================================
+           KEEP GAME FROM RESIZING CANVAS
+        ========================================= */
+
+        const forceCanvasSize = () => {
+
+            canvasEl.width = 1280;
+            canvasEl.height = 720;
+
+            canvasEl.style.width = "1280px";
+            canvasEl.style.height = "720px";
+        };
+
+        forceCanvasSize();
+
+        setInterval(forceCanvasSize, 500);
+
     } catch (err) {
+
         console.error(err);
+
         document.body.innerHTML =
             "<pre style='color:white;white-space:pre-wrap;padding:16px;margin:0'>" +
             (err?.stack || err) +
             "</pre>";
     }
+
 })();
 </script>
 
