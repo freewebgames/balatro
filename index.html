@@ -3,211 +3,203 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-<title>Balatro Loader (iOS Safe)</title>
+<title>Balatro Local Chunk Loader</title>
 
 <style>
 html, body {
-    margin: 0;
-    padding: 0;
-    background: black;
-    overflow: hidden;
-    width: 100%;
-    height: 100%;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  overflow: hidden;
+  background: #000;
 }
 
 #canvas {
-    position: fixed;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    display: block;
+  position: absolute;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  display: block;
 }
 </style>
 
 <script>
-/* =========================
-   SAFE RESIZE HANDLER (iOS FIX)
-   ========================= */
-function resizeCanvas() {
-    const canvas = document.getElementById("canvas");
+/* =========================================================
+   BLOCK POPUPS / DIALOGS
+========================================================= */
+(() => {
+  window.alert = () => {};
+  window.prompt = () => null;
+  window.confirm = () => false;
+  window.open = () => null;
 
-    const w = window.innerWidth;
-    const h = window.innerHeight;
-
-    canvas.width = w;
-    canvas.height = h;
-}
-
-window.addEventListener("resize", resizeCanvas);
-window.addEventListener("orientationchange", resizeCanvas);
-window.addEventListener("load", resizeCanvas);
+  if (window.HTMLDialogElement) {
+    const noop = () => {};
+    HTMLDialogElement.prototype.show = noop;
+    HTMLDialogElement.prototype.showModal = noop;
+    HTMLDialogElement.prototype.close = noop;
+  }
+})();
 </script>
 
 <script>
-/* =========================
-   DEBUG HELPER (IMPORTANT)
-   ========================= */
-function debug(msg) {
-    console.log("[Loader]", msg);
-}
+/* =========================================================
+   BLOCK FULLSCREEN REQUESTS
+========================================================= */
+(() => {
+  const noOp = () => Promise.reject("Fullscreen blocked");
+
+  document.exitFullscreen = noOp;
+  document.webkitExitFullscreen = noOp;
+  document.mozCancelFullScreen = noOp;
+  document.msExitFullscreen = noOp;
+
+  const elemProto = HTMLElement.prototype;
+  elemProto.requestFullscreen = noOp;
+  elemProto.webkitRequestFullscreen = noOp;
+  elemProto.mozRequestFullScreen = noOp;
+  elemProto.msRequestFullscreen = noOp;
+})();
 </script>
 
 <script>
+/* =========================================================
+   DISABLE INDEXEDDB COMPLETELY (NO SAVING LAYER)
+========================================================= */
+(() => {
+  if (!window.indexedDB) return;
+
+  // Hard-disable persistence surface used by many web games
+  try {
+    const noopOpen = () => {
+      console.warn("IndexedDB blocked");
+      return null;
+    };
+
+    indexedDB.open = noopOpen;
+    indexedDB.deleteDatabase = () => {
+      console.warn("IndexedDB delete blocked");
+      return null;
+    };
+  } catch (e) {
+    console.warn("Failed to disable IndexedDB:", e);
+  }
+})();
+</script>
+
+<script>
+/* =========================================================
+   LOCAL FILE CONFIG
+========================================================= */
 const BASE = "./";
 
 const MODULE_PARTS = [
-    "modulejs_part_aa",
-    "modulejs_part_ab",
-    "modulejs_part_ac",
-    "modulejs_part_ad",
-    "modulejs_part_ae",
-    "modulejs_part_af"
+  "modulejs_part_aa",
+  "modulejs_part_ab",
+  "modulejs_part_ac",
+  "modulejs_part_ad",
+  "modulejs_part_ae",
+  "modulejs_part_af"
 ];
 
-/* =========================
-   iOS-SAFE XHR LOADER
-   ========================= */
-function loadChunk(name) {
-    return new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-
-        const url = BASE + name;
-        debug("Loading chunk: " + url);
-
-        xhr.open("GET", url, true);
-        xhr.responseType = "arraybuffer";
-
-        xhr.onload = () => {
-            debug(name + " status: " + xhr.status);
-
-            if (xhr.status >= 200 && xhr.status < 300) {
-                resolve(xhr.response);
-            } else {
-                reject(new Error("HTTP " + xhr.status + " -> " + name));
-            }
-        };
-
-        xhr.onerror = () => {
-            reject(new Error("XHR network error -> " + name));
-        };
-
-        xhr.send();
-    });
-}
-
-/* retry */
-async function loadChunkSafe(name, tries = 3) {
-    for (let i = 0; i < tries; i++) {
-        try {
-            return await loadChunk(name);
-        } catch (e) {
-            debug("Retry " + i + " failed: " + name);
-            if (i === tries - 1) throw e;
-        }
-    }
-}
-
-/* =========================
-   MODULE LOADER
-   ========================= */
+/* =========================================================
+   SAFE BINARY MERGER
+========================================================= */
 async function loadModuleFromChunks() {
+  const buffers = await Promise.all(
+    MODULE_PARTS.map(f =>
+      fetch(BASE + f).then(async r => {
+        if (!r.ok) throw new Error("Failed loading chunk: " + f);
+        return r.arrayBuffer();
+      })
+    )
+  );
 
-    const buffers = await Promise.all(
-        MODULE_PARTS.map(f => loadChunkSafe(f))
-    );
+  const blob = new Blob(buffers, { type: "application/javascript" });
+  const url = URL.createObjectURL(blob);
 
-    debug("All chunks loaded");
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = url;
+    s.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve();
+    };
+    s.onerror = reject;
+    document.body.appendChild(s);
+  });
+}
 
-    let total = 0;
-    for (const b of buffers) total += b.byteLength;
-
-    const merged = new Uint8Array(total);
-
-    let offset = 0;
-    for (const b of buffers) {
-        merged.set(new Uint8Array(b), offset);
-        offset += b.byteLength;
-    }
-
-    const code = new TextDecoder("utf-8").decode(merged);
-
-    debug("Executing module JS");
-
-    const script = document.createElement("script");
-    script.text = code;
-    document.body.appendChild(script);
+/* =========================================================
+   SCRIPT LOADER
+========================================================= */
+function loadScript(url) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = url;
+    s.onload = resolve;
+    s.onerror = reject;
+    document.body.appendChild(s);
+  });
 }
 </script>
 
 </head>
 
 <body>
-
 <canvas id="canvas"></canvas>
 
 <script>
+/* =========================================================
+   BOOT SEQUENCE
+========================================================= */
 (async () => {
+  try {
+    const canvasEl = document.getElementById("canvas");
 
-    try {
+    /* ========================= ENGINE ========================= */
+    await loadScript(BASE + "love.min.js");
 
-        resizeCanvas();
-
-        debug("Boot start");
-
-        await loadScript("./love.min.js");
-
-        if (typeof Love !== "function") {
-            throw new Error("love.min.js missing or blocked");
-        }
-
-        await loadModuleFromChunks();
-
-        if (typeof getSource !== "function") {
-            throw new Error("module failed: getSource missing");
-        }
-
-        const d = await getSource();
-
-        window.Module = {
-            INITIAL_MEMORY: 2 ** 28,
-            canvas: document.getElementById("canvas"),
-            printErr: console.error,
-            arguments: ["game.love"]
-        };
-
-        Module.preRun = [function () {
-
-            Module.addRunDependency("fp game.love");
-
-            const ptr = Module.getMemory(d.length);
-
-            Module["HEAPU8"].set(d, ptr);
-
-            Module.FS_createDataFile(
-                "/",
-                "game.love",
-                d,
-                true,
-                true,
-                true
-            );
-
-            Module.removeRunDependency("fp game.love");
-        }];
-
-        Love(Module);
-
-    } catch (err) {
-
-        console.error(err);
-
-        document.body.innerHTML =
-            "<pre style='color:white;white-space:pre-wrap;padding:12px'>" +
-            (err?.stack || err) +
-            "</pre>";
+    if (typeof Love !== "function") {
+      throw new Error("love.min.js failed (Love missing)");
     }
 
+    /* ========================= MODULE ========================= */
+    await loadModuleFromChunks();
+
+    if (typeof getSource !== "function") {
+      throw new Error("module failed (getSource missing)");
+    }
+
+    /* ========================= GAME DATA ========================= */
+    const d = await getSource();
+
+    window.Module = {
+      INITIAL_MEMORY: 2 ** 28,
+      canvas: canvasEl,
+      printErr: console.error,
+      arguments: ["game.love"]
+    };
+
+    Module.preRun = [function () {
+      Module.addRunDependency("fp game.love");
+
+      const ptr = Module.getMemory(d.length);
+      Module["HEAPU8"].set(d, ptr);
+      Module.FS_createDataFile("/", "game.love", d, true, true, true);
+
+      Module.removeRunDependency("fp game.love");
+    }];
+
+    Love(Module);
+
+  } catch (err) {
+    console.error(err);
+    document.body.innerHTML =
+      "<pre style='color:white;white-space:pre-wrap;padding:16px;margin:0'>" +
+      (err?.stack || err) +
+      "</pre>";
+  }
 })();
 </script>
 
