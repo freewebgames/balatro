@@ -31,7 +31,6 @@ html, body {
     window.alert = () => {};
     window.prompt = () => null;
     window.confirm = () => false;
-
     window.open = () => null;
 
     if (window.HTMLDialogElement) {
@@ -45,28 +44,21 @@ html, body {
 
 <script>
 /* =========================================================
-   BLOCK JS FULLSCREEN REQUESTS
+   FULLSCREEN BLOCK
    ========================================================= */
 (() => {
-    const noOp = () => Promise.reject("Fullscreen blocked by page policy");
-
-    if (document.fullscreenEnabled !== undefined) {
-        Object.defineProperty(document, "fullscreenEnabled", {
-            value: false
-        });
-    }
+    const noOp = () => Promise.reject("Fullscreen blocked");
 
     document.exitFullscreen = noOp;
     document.webkitExitFullscreen = noOp;
     document.mozCancelFullScreen = noOp;
     document.msExitFullscreen = noOp;
 
-    const elemProto = HTMLElement.prototype;
-
-    elemProto.requestFullscreen = noOp;
-    elemProto.webkitRequestFullscreen = noOp;
-    elemProto.mozRequestFullScreen = noOp;
-    elemProto.msRequestFullscreen = noOp;
+    const p = HTMLElement.prototype;
+    p.requestFullscreen = noOp;
+    p.webkitRequestFullscreen = noOp;
+    p.mozRequestFullScreen = noOp;
+    p.msRequestFullscreen = noOp;
 })();
 </script>
 
@@ -83,9 +75,7 @@ html, body {
     const del = indexedDB.deleteDatabase.bind(indexedDB);
 
     indexedDB.open = (name, version) =>
-        version !== undefined
-            ? open(PREFIX + name, version)
-            : open(PREFIX + name);
+        version !== undefined ? open(PREFIX + name, version) : open(PREFIX + name);
 
     indexedDB.deleteDatabase = (name) => del(PREFIX + name);
 })();
@@ -93,19 +83,8 @@ html, body {
 
 <script>
 /* =========================================================
-   LOCAL FILE CONFIG
+   CONFIG
    ========================================================= */
-
-/*
-    Uses files from the SAME DIRECTORY as index.html
-
-    Example:
-    /balatro/index.html
-    /balatro/love.min.js
-    /balatro/modulejs_part_aa
-    etc.
-*/
-
 const BASE = "./";
 
 const MODULE_PARTS = [
@@ -118,62 +97,75 @@ const MODULE_PARTS = [
 ];
 
 /* =========================================================
-   SAFE BINARY MERGER
+   iOS-SAFE CHUNK LOADER (XHR)
+   ========================================================= */
+function loadChunk(name) {
+    return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", BASE + name, true);
+        xhr.responseType = "arraybuffer";
+
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                resolve(xhr.response);
+            } else {
+                reject(new Error("HTTP " + xhr.status + " for " + name));
+            }
+        };
+
+        xhr.onerror = () => reject(new Error("Network error: " + name));
+        xhr.send();
+    });
+}
+
+/* retry wrapper */
+async function loadChunkSafe(name, retries = 3) {
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await loadChunk(name);
+        } catch (e) {
+            if (i === retries - 1) throw e;
+        }
+    }
+}
+
+/* =========================================================
+   MODULE LOADER (NO BLOBS, IOS SAFE)
    ========================================================= */
 async function loadModuleFromChunks() {
 
     const buffers = await Promise.all(
-        MODULE_PARTS.map(f =>
-            fetch(BASE + f).then(async r => {
-
-                if (!r.ok) {
-                    throw new Error(
-                        "Failed loading chunk: " + f
-                    );
-                }
-
-                return r.arrayBuffer();
-            })
-        )
+        MODULE_PARTS.map(f => loadChunkSafe(f))
     );
 
-    const blob = new Blob(buffers, {
-        type: "application/javascript"
-    });
+    /* Merge binary chunks */
+    const mergedLength = buffers.reduce((a, b) => a + b.byteLength, 0);
+    const merged = new Uint8Array(mergedLength);
 
-    const url = URL.createObjectURL(blob);
+    let offset = 0;
+    for (const b of buffers) {
+        merged.set(new Uint8Array(b), offset);
+        offset += b.byteLength;
+    }
 
-    return new Promise((resolve, reject) => {
+    /* Decode JS safely */
+    const code = new TextDecoder("utf-8").decode(merged);
 
-        const s = document.createElement("script");
-
-        s.src = url;
-
-        s.onload = () => {
-            URL.revokeObjectURL(url);
-            resolve();
-        };
-
-        s.onerror = reject;
-
-        document.body.appendChild(s);
-    });
+    /* Execute safely across all platforms */
+    const script = document.createElement("script");
+    script.text = code;
+    document.body.appendChild(script);
 }
 
 /* =========================================================
    SCRIPT LOADER
    ========================================================= */
 function loadScript(url) {
-
     return new Promise((resolve, reject) => {
-
         const s = document.createElement("script");
-
         s.src = url;
-
         s.onload = resolve;
         s.onerror = reject;
-
         document.body.appendChild(s);
     });
 }
@@ -193,34 +185,23 @@ function loadScript(url) {
 
     try {
 
-        const canvasEl =
-            document.getElementById("canvas");
+        const canvasEl = document.getElementById("canvas");
 
-        /* =========================
-           STAGE 1: ENGINE
-        ========================= */
+        /* ENGINE */
         await loadScript(BASE + "love.min.js");
 
         if (typeof Love !== "function") {
-            throw new Error(
-                "love.min.js failed (Love missing)"
-            );
+            throw new Error("love.min.js failed");
         }
 
-        /* =========================
-           STAGE 2: MODULE
-        ========================= */
+        /* MODULE */
         await loadModuleFromChunks();
 
         if (typeof getSource !== "function") {
-            throw new Error(
-                "module failed (getSource missing)"
-            );
+            throw new Error("module failed (getSource missing)");
         }
 
-        /* =========================
-           STAGE 3: GAME DATA
-        ========================= */
+        /* GAME DATA */
         const d = await getSource();
 
         window.Module = {
@@ -232,12 +213,9 @@ function loadScript(url) {
 
         Module.preRun = [function () {
 
-            Module.addRunDependency(
-                "fp game.love"
-            );
+            Module.addRunDependency("fp game.love");
 
-            const ptr =
-                Module.getMemory(d.length);
+            const ptr = Module.getMemory(d.length);
 
             Module["HEAPU8"].set(d, ptr);
 
@@ -250,9 +228,7 @@ function loadScript(url) {
                 true
             );
 
-            Module.removeRunDependency(
-                "fp game.love"
-            );
+            Module.removeRunDependency("fp game.love");
         }];
 
         Love(Module);
