@@ -64,31 +64,6 @@ html, body {
 
 <script>
 /* =========================================================
-   DISABLE INDEXEDDB COMPLETELY (NO SAVING LAYER)
-========================================================= */
-(() => {
-  if (!window.indexedDB) return;
-
-  // Hard-disable persistence surface used by many web games
-  try {
-    const noopOpen = () => {
-      console.warn("IndexedDB blocked");
-      return null;
-    };
-
-    indexedDB.open = noopOpen;
-    indexedDB.deleteDatabase = () => {
-      console.warn("IndexedDB delete blocked");
-      return null;
-    };
-  } catch (e) {
-    console.warn("Failed to disable IndexedDB:", e);
-  }
-})();
-</script>
-
-<script>
-/* =========================================================
    LOCAL FILE CONFIG
 ========================================================= */
 const BASE = "./";
